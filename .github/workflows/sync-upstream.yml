@@ -19,11 +19,15 @@ jobs:
   sync:
     name: 同步 Marchen-orz/MiyoQian
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
     outputs:
       changed: ${{ steps.sync.outputs.changed }}
       conflict: ${{ steps.sync.outputs.conflict }}
       ref: ${{ steps.sync.outputs.ref }}
       files: ${{ steps.sync.outputs.files }}
+
     steps:
       - name: Checkout personal branch
         uses: actions/checkout@v4
@@ -47,7 +51,7 @@ jobs:
             +refs/heads/master:refs/remotes/origin/master \
             +refs/heads/custom/cron:refs/remotes/origin/custom/cron
 
-          # Fork 的 master 只跟随上游，不把个人定制提交写进 master。
+          # 检查 Fork master 是否可以安全快进到上游 master。
           if ! git merge-base --is-ancestor refs/remotes/origin/master refs/remotes/upstream/master; then
             echo "Fork 的 master 不能快进到上游 master；为避免覆盖，停止同步。"
             exit 1
@@ -56,6 +60,7 @@ jobs:
           git checkout -B custom/cron refs/remotes/origin/custom/cron
           before="$(git rev-parse HEAD)"
 
+          # 合并上游更新。
           if ! git merge --no-edit refs/remotes/upstream/master; then
             conflict_files="$(git diff --name-only --diff-filter=U || true)"
 
@@ -64,6 +69,7 @@ jobs:
               exit 1
             fi
 
+            # 发生冲突时放弃本次合并，不覆盖个人修改。
             git merge --abort
 
             {
@@ -80,7 +86,7 @@ jobs:
 
           after="$(git rev-parse HEAD)"
 
-          # 两个分支在一次原子推送中更新，避免只更新一半。
+          # 原子推送 Fork master 和个人定制分支。
           git push --atomic origin \
             refs/remotes/upstream/master:refs/heads/master \
             HEAD:refs/heads/custom/cron
