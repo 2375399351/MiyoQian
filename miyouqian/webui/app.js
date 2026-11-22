@@ -170,7 +170,7 @@ async function loadConfig() {
 
 function renderConfig() {
   $("scheduleEnable").checked = Boolean(config.schedule?.enable ?? true);
-  $("scheduleTime").value = config.schedule?.time || "09:00";
+  $("scheduleCron").value = config.schedule?.cron || "0 9 * * *";
   $("scheduleJitter").value = config.schedule?.jitter_minutes ?? 45;
   $("runOnStart").checked = Boolean(config.schedule?.run_on_start ?? false);
 
@@ -1864,7 +1864,7 @@ function shiftExpandedCloudAccounts(removedIndex) {
 function collectConfig() {
   config.schedule = {
     enable: $("scheduleEnable").checked,
-    time: $("scheduleTime").value || "09:00",
+    cron: $("scheduleCron").value.trim() || "0 9 * * *",
     jitter_minutes: Number($("scheduleJitter").value || 0),
     run_on_start: $("runOnStart").checked,
   };
@@ -3526,7 +3526,7 @@ function bindEvents() {
       });
   bindShopEvents();
   document.addEventListener("change", (event) => {
-    if (event.target?.matches?.("[data-autosave]")) {
+    if (event.target?.id === "scheduleCron" || event.target?.matches?.("[data-autosave]")) {
       scheduleAutoSave();
     }
   });

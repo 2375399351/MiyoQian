@@ -146,19 +146,28 @@
             <details class="panel" data-panel="schedule">
               <summary>
                 <span>
-                  <strong>每日调度</strong>
-                  <small>自动运行</small>
+                  <strong>Cron 自动调度</strong>
+                  <small>按表达式定时执行</small>
                 </span>
                 <span class="disclosure" aria-hidden="true"></span>
               </summary>
               <label class="check-row">
                 <input id="scheduleEnable" type="checkbox" data-autosave />
-                <span>启用每日自动执行</span>
+                <span>启用 Cron 自动执行</span>
               </label>
               <div class="form-grid two">
                 <label>
-                  <span>执行时间</span>
-                  <input id="scheduleTime" type="time" data-autosave />
+                  <span>五位 Cron 表达式</span>
+                  <input
+                    id="scheduleCron"
+                    type="text"
+                    inputmode="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="0 9 * * *"
+                    maxlength="100"
+                  />
+                  <small>字段顺序：分 时 日 月 星期。例如 0 9 * * * 表示每天 09:00。</small>
                 </label>
                 <label>
                   <span>随机波动分钟</span>

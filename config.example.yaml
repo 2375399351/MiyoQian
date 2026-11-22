@@ -50,8 +50,8 @@ captcha:
 
 schedule:
   enable: false
-  time: "09:00"
-  jitter_minutes: 45
+  cron: "0 9 * * *"  # 标准五位 Cron：分 时 日 月 星期
+  jitter_minutes: 45 # Cron 触发后随机延后 0～45 分钟
   run_on_start: false
 
 web:

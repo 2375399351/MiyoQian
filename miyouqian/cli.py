@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--bbs-only", action="store_true", help="只执行米游币社区任务")
     run_parser.add_argument("--game", action="append", help="只执行指定游戏，可重复传入")
 
-    serve_parser = subparsers.add_parser("serve", help="启动常驻 Web 控制台和每日调度器")
+    serve_parser = subparsers.add_parser("serve", help="启动常驻 Web 控制台和 Cron 调度器")
     serve_parser.add_argument("--host", default=None, help="监听地址，默认读取配置文件")
     serve_parser.add_argument("--port", type=int, default=None, help="监听端口，默认读取配置文件")
 
@@ -182,9 +182,9 @@ def command_show(config_path: pathlib.Path) -> int:
     print(f"米游币社区任务: {config.get('features', {}).get('bbs_tasks', False)}")
     schedule = config.get("schedule", {})
     print(
-        "每日调度: "
-        f"{schedule.get('enable', True)} "
-        f"{schedule.get('time', '09:00')} +/- {schedule.get('jitter_minutes', 45)} 分钟"
+        "Cron 调度: "
+        f"{schedule.get('enable', False)} "
+        f"{schedule.get('cron', '0 9 * * *')} + 随机延迟 0～{schedule.get('jitter_minutes', 45)} 分钟"
     )
     print(f"凭证文件: {credentials_path(config_path, config).resolve()}")
     print(f"日志文件: {log_path(config_path, config).resolve()}")

@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from .cron import validate_cron
+
 from .cookies import guess_uid
 from .device import normalize_device
 from .region import REGION_CN, REGION_OS, account_region, normalize_region
@@ -37,7 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             {"provider": "custom", "enable": False, "url": "", "api_key": "", "timeout": 120},
         ],
     },
-    "schedule": {"enable": False, "time": "09:00", "jitter_minutes": 45, "run_on_start": False},
+    "schedule": {"enable": False, "cron": "0 9 * * *", "jitter_minutes": 45, "run_on_start": False},
     "games": {
         "enabled": ["genshin", "starrail", "zzz"],
         "black_list": {"genshin": [], "starrail": [], "zzz": []},
@@ -84,6 +86,19 @@ def load_config(path: str | pathlib.Path) -> dict[str, Any]:
         loaded = yaml.safe_load(file) or {}
     if not isinstance(loaded, dict):
         raise ValueError(f"配置文件格式错误: {config_path}")
+    # 在默认配置合并前迁移旧版 time 字段，否则默认 cron 会遮蔽旧时间。
+    raw_schedule = loaded.get("schedule")
+    if isinstance(raw_schedule, dict) and "time" in raw_schedule and "cron" not in raw_schedule:
+        raw_time = str(raw_schedule.get("time") or "09:00").strip()
+        try:
+            hour_text, minute_text = raw_time.split(":", 1)
+            hour, minute = int(hour_text), int(minute_text)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+            raw_schedule["cron"] = f"{minute} {hour} * * *"
+        except (TypeError, ValueError):
+            raw_schedule["cron"] = "0 9 * * *"
+        raw_schedule.pop("time", None)
     config = merge_dict(copy.deepcopy(DEFAULT_CONFIG), loaded)
     normalize_config(config)
     merge_credentials(config, load_credentials(config_path, config))
@@ -121,6 +136,7 @@ def merge_dict(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_config(config: dict[str, Any]) -> None:
+    normalize_schedule(config)
     storage = config.setdefault("storage", {})
     storage.setdefault("data_dir", "data")
     storage.setdefault("credentials_file", "credentials.yaml")
@@ -181,6 +197,34 @@ def normalize_config(config: dict[str, Any]) -> None:
     for key in ("read", "like", "share"):
         bbs[key] = parse_bool(bbs.get(key, False))
     normalize_shop_exchange(config)
+
+
+def normalize_schedule(config: dict[str, Any]) -> None:
+    schedule = config.setdefault("schedule", {})
+    if not isinstance(schedule, dict):
+        schedule = {}
+        config["schedule"] = schedule
+    if "time" in schedule and "cron" not in schedule:
+        raw_time = str(schedule.get("time") or "09:00").strip()
+        try:
+            hour_text, minute_text = raw_time.split(":", 1)
+            hour, minute = int(hour_text), int(minute_text)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+            schedule["cron"] = f"{minute} {hour} * * *"
+        except (TypeError, ValueError):
+            schedule["cron"] = "0 9 * * *"
+    schedule.pop("time", None)
+    expression = str(schedule.get("cron", "0 9 * * *")).strip()
+    if not validate_cron(expression):
+        raise ValueError(f"schedule.cron 无效：{expression!r}。请使用标准五位 Cron（分 时 日 月 星期）")
+    schedule["cron"] = expression
+    schedule["enable"] = parse_bool(schedule.get("enable", False))
+    try:
+        schedule["jitter_minutes"] = min(max(int(schedule.get("jitter_minutes", 45) or 0), 0), 720)
+    except (TypeError, ValueError):
+        schedule["jitter_minutes"] = 45
+    schedule["run_on_start"] = parse_bool(schedule.get("run_on_start", False))
 
 
 def normalize_shop_exchange(config: dict[str, Any]) -> None:
