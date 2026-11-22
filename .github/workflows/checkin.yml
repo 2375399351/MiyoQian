@@ -1,5 +1,6 @@
-name: 米游签定时签到
+name: 米游签手动签到
 
+# Fork 使用 Docker 容器内的 Cron 调度；此工作流仅保留手动运行入口，避免重复签到。
 on:
   workflow_dispatch:
     inputs:
@@ -16,10 +17,6 @@ on:
         description: "只执行指定账号名，留空执行全部账号"
         required: false
         type: string
-  schedule:
-    # 默认每天北京时间 09:20 执行。修改时间时只改 cron 即可。
-    - cron: "20 9 * * *"
-      timezone: "Asia/Shanghai"
 
 permissions:
   contents: read
