@@ -21,10 +21,10 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-GITHUB_OWNER = "Marchen-orz"
+GITHUB_OWNER = "2375399351"
 GITHUB_REPO_NAME = "MiyoQian"
 GITHUB_REPO = f"{GITHUB_OWNER}/{GITHUB_REPO_NAME}"
-GITHUB_BRANCH = "master"
+GITHUB_BRANCH = "custom/cron"
 GITHUB_REPO_URL = f"https://github.com/{GITHUB_REPO}.git"
 GITHUB_ATOM_URL = f"https://github.com/{GITHUB_REPO}/commits/{GITHUB_BRANCH}.atom"
 GITHUB_API_COMMIT_URL = f"https://api.github.com/repos/{GITHUB_REPO}/commits/{GITHUB_BRANCH}"
