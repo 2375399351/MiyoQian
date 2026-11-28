@@ -1,3 +1,4 @@
+
 name: 同步上游并构建个人镜像
 
 on:
@@ -46,7 +47,6 @@ jobs:
 
           git remote add upstream https://github.com/Marchen-orz/MiyoQian.git
           git fetch upstream master
-
           git fetch origin \
             +refs/heads/master:refs/remotes/origin/master \
             +refs/heads/custom/cron:refs/remotes/origin/custom/cron
@@ -60,16 +60,44 @@ jobs:
           git checkout -B custom/cron refs/remotes/origin/custom/cron
           before="$(git rev-parse HEAD)"
 
-          # 合并上游更新。
-          if ! git merge --no-edit refs/remotes/upstream/master; then
-            conflict_files="$(git diff --name-only --diff-filter=U || true)"
+          # 尝试合并上游更新，暂不自动创建合并提交。
+          merge_failed=false
 
-            if [ -z "$conflict_files" ]; then
-              echo "合并失败，但没有检测到普通文件冲突。"
-              exit 1
+          if git merge --no-commit --no-ff refs/remotes/upstream/master; then
+            echo "上游合并命令执行成功。"
+          else
+            merge_failed=true
+            echo "检测到合并未能直接完成，开始检查冲突。"
+          fi
+
+          conflict_files="$(git diff --name-only --diff-filter=U || true)"
+
+          # 合并失败但没有普通文件冲突，说明可能是其他 Git 错误。
+          if [ "$merge_failed" = "true" ] && [ -z "$conflict_files" ]; then
+            echo "合并失败，但没有检测到普通文件冲突。"
+            git merge --abort || true
+            exit 1
+          fi
+
+          # 自动解决两个个人定制文件的冲突，保留 Fork 版本。
+          for path in \
+            ".github/workflows/docker.yml" \
+            "docker/docker-compose.image.yml"
+          do
+            if git ls-files -u -- "$path" | grep -q .; then
+              echo "自动解决个人定制文件冲突，保留 Fork 版本：$path"
+              git checkout --ours -- "$path"
+              git add -- "$path"
             fi
+          done
 
-            # 发生冲突时放弃本次合并，不覆盖个人修改。
+          # 检查是否仍有其他文件冲突。
+          remaining_conflicts="$(git diff --name-only --diff-filter=U || true)"
+
+          if [ -n "$remaining_conflicts" ]; then
+            echo "发现无法自动处理的其他冲突，停止本次同步："
+            echo "$remaining_conflicts"
+
             git merge --abort
 
             {
@@ -77,11 +105,25 @@ jobs:
               echo "changed=false"
               echo "ref=$before"
               echo "files<<EOF"
-              echo "$conflict_files"
+              echo "$remaining_conflicts"
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
 
             exit 0
+          fi
+
+          # 如果存在合并任务，始终恢复两个个人定制文件的原始版本。
+          if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+            git checkout "$before" -- \
+              ".github/workflows/docker.yml" \
+              "docker/docker-compose.image.yml"
+
+            git add -- \
+              ".github/workflows/docker.yml" \
+              "docker/docker-compose.image.yml"
+
+            # 提交合并结果。
+            git commit --no-edit
           fi
 
           after="$(git rev-parse HEAD)"
@@ -112,7 +154,6 @@ jobs:
           set -euo pipefail
 
           title="上游同步发生冲突：请检查 custom/cron"
-
           existing="$(gh issue list \
             --state open \
             --search "$title in:title" \
@@ -120,13 +161,15 @@ jobs:
             --jq '.[0].number // empty')"
 
           body=$(cat <<EOF
-          自动同步上游 Marchen-orz/MiyoQian:master 时发生合并冲突。
+          自动同步上游 Marchen-orz/MiyoQian:master 时发生无法自动解决的合并冲突。
 
           **没有强制覆盖或推送任何冲突内容。**
 
-          请人工检查以下文件，并在解决后重新运行「同步上游并构建个人镜像」工作流：
+          以下文件需要人工检查：
 
           $CONFLICT_FILES
+
+          请解决冲突后重新运行「同步上游并构建个人镜像」工作流。
           EOF
           )
 
