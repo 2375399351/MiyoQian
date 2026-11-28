@@ -35,6 +35,7 @@ jobs:
         with:
           ref: custom/cron
           fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
 
       - name: Fetch upstream and merge safely
         id: sync
@@ -147,7 +148,7 @@ jobs:
       - name: Create or update conflict notification issue
         if: steps.sync.outputs.conflict == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           CONFLICT_FILES: ${{ steps.sync.outputs.files }}
         shell: bash
         run: |
