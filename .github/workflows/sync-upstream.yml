@@ -3,7 +3,6 @@ name: 同步上游并构建个人镜像
 
 on:
   schedule:
-    # 每天 04:17 UTC 自动检查上游更新
     - cron: "17 4 * * *"
   workflow_dispatch:
 
@@ -18,11 +17,13 @@ concurrency:
 
 jobs:
   sync:
-    name: 同步 Marchen-orz/MiyoQian
+    name: 同步上游仓库
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
       issues: write
+
     outputs:
       changed: ${{ steps.sync.outputs.changed }}
       conflict: ${{ steps.sync.outputs.conflict }}
@@ -37,7 +38,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
 
-      - name: Fetch upstream and merge safely
+      - name: Fetch and merge upstream safely
         id: sync
         shell: bash
         run: |
@@ -47,89 +48,116 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git remote add upstream https://github.com/Marchen-orz/MiyoQian.git
+
           git fetch upstream master
+
           git fetch origin \
             +refs/heads/master:refs/remotes/origin/master \
             +refs/heads/custom/cron:refs/remotes/origin/custom/cron
 
-          # 检查 Fork master 是否可以安全快进到上游 master。
-          if ! git merge-base --is-ancestor refs/remotes/origin/master refs/remotes/upstream/master; then
-            echo "Fork 的 master 不能快进到上游 master；为避免覆盖，停止同步。"
+          # 确保 Fork master 可以安全快进到上游 master。
+          if ! git merge-base --is-ancestor \
+            refs/remotes/origin/master \
+            refs/remotes/upstream/master; then
+            echo "Fork master 无法快进到上游 master，停止同步。"
             exit 1
           fi
 
           git checkout -B custom/cron refs/remotes/origin/custom/cron
+
           before="$(git rev-parse HEAD)"
+          before_tree="$(git rev-parse HEAD^{tree})"
 
-          # 尝试合并上游更新，暂不自动创建合并提交。
-          merge_failed=false
+          # 个人定制文件保护名单。
+          protected_files=(
+            ".github/workflows/docker.yml"
+            "docker/docker-compose.image.yml"
+            "miyouqian/core/updater.py"
+          )
 
-          if git merge --no-commit --no-ff refs/remotes/upstream/master; then
-            echo "上游合并命令执行成功。"
-          else
-            merge_failed=true
-            echo "检测到合并未能直接完成，开始检查冲突。"
-          fi
+          # 执行合并。
+          # 使用 || merge_status=$?，避免 Bash 的 ! 运算符
+          # 反转退出状态后导致错误判断。
+          merge_status=0
 
+          git merge \
+            --no-edit \
+            --no-commit \
+            --no-ff \
+            refs/remotes/upstream/master || merge_status=$?
+
+          # 获取所有未解决的冲突文件。
           conflict_files="$(git diff --name-only --diff-filter=U || true)"
 
-          # 合并失败但没有普通文件冲突，说明可能是其他 Git 错误。
-          if [ "$merge_failed" = "true" ] && [ -z "$conflict_files" ]; then
-            echo "合并失败，但没有检测到普通文件冲突。"
-            git merge --abort || true
+          if [ -n "$conflict_files" ]; then
+            unresolved_files=""
+
+            while IFS= read -r path; do
+              [ -z "$path" ] && continue
+
+              protected=false
+
+              for protected_path in "${protected_files[@]}"; do
+                if [ "$path" = "$protected_path" ]; then
+                  protected=true
+                  break
+                fi
+              done
+
+              if [ "$protected" = true ]; then
+                # 保留个人 Fork 版本。
+                git checkout --ours -- "$path"
+                git add -- "$path"
+
+                echo "自动解决个人定制文件冲突，保留 Fork 版本：$path"
+              else
+                # 非保护文件冲突，交由用户处理。
+                unresolved_files="${unresolved_files}${path}"$'\n'
+              fi
+
+            done <<< "$conflict_files"
+
+            # 存在其他文件冲突，安全中止。
+            if [ -n "$unresolved_files" ]; then
+              git merge --abort
+
+              echo "conflict=true" >> "$GITHUB_OUTPUT"
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "ref=$before" >> "$GITHUB_OUTPUT"
+
+              {
+                echo "files<<EOF"
+                printf '%s' "$unresolved_files"
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+
+              echo "其他文件存在冲突，已中止合并，没有推送任何内容。"
+              exit 0
+            fi
+          fi
+
+          # 如果合并失败，但没有可处理的冲突，则报错。
+          if [ "$merge_status" -ne 0 ] && [ -z "$conflict_files" ]; then
+            echo "合并失败，未检测到可自动解决的文件冲突。"
             exit 1
           fi
 
-          # 自动解决两个个人定制文件的冲突，保留 Fork 版本。
-          for path in \
-            ".github/workflows/docker.yml" \
-            "docker/docker-compose.image.yml"
-          do
-            if git ls-files -u -- "$path" | grep -q .; then
-              echo "自动解决个人定制文件冲突，保留 Fork 版本：$path"
-              git checkout --ours -- "$path"
-              git add -- "$path"
-            fi
-          done
-
-          # 检查是否仍有其他文件冲突。
-          remaining_conflicts="$(git diff --name-only --diff-filter=U || true)"
-
-          if [ -n "$remaining_conflicts" ]; then
-            echo "发现无法自动处理的其他冲突，停止本次同步："
-            echo "$remaining_conflicts"
-
-            git merge --abort
-
-            {
-              echo "conflict=true"
-              echo "changed=false"
-              echo "ref=$before"
-              echo "files<<EOF"
-              echo "$remaining_conflicts"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
-
-            exit 0
-          fi
-
-          # 如果存在合并任务，始终恢复两个个人定制文件的原始版本。
+          # 如果存在有效的合并状态，恢复所有个人定制文件。
           if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-            git checkout "$before" -- \
-              ".github/workflows/docker.yml" \
-              "docker/docker-compose.image.yml"
 
-            git add -- \
-              ".github/workflows/docker.yml" \
-              "docker/docker-compose.image.yml"
+            git checkout "$before" -- "${protected_files[@]}"
 
-            # 提交合并结果。
-            git commit --no-edit
+            git add -- "${protected_files[@]}"
+
+            git commit -m "Merge upstream master into custom/cron"
+
           fi
 
           after="$(git rev-parse HEAD)"
+          after_tree="$(git rev-parse HEAD^{tree})"
 
-          # 原子推送 Fork master 和个人定制分支。
+          # 原子推送两个分支。
+          # 任意一个分支推送失败，两个分支都不会更新。
           git push --atomic origin \
             refs/remotes/upstream/master:refs/heads/master \
             HEAD:refs/heads/custom/cron
@@ -137,12 +165,14 @@ jobs:
           echo "conflict=false" >> "$GITHUB_OUTPUT"
           echo "ref=$after" >> "$GITHUB_OUTPUT"
 
-          if [ "$before" = "$after" ]; then
+          # 比较实际文件树，而不是提交 SHA。
+          # 只有代码内容发生变化时才需要重新构建镜像。
+          if [ "$before_tree" = "$after_tree" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "custom/cron 已包含全部上游更新，无需重新构建镜像。"
+            echo "同步完成，但实际文件内容没有变化，跳过镜像构建。"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "上游更新已合并并推送，准备构建个人镜像。"
+            echo "上游代码已更新，准备构建个人镜像。"
           fi
 
       - name: Create or update conflict notification issue
@@ -155,38 +185,50 @@ jobs:
           set -euo pipefail
 
           title="上游同步发生冲突：请检查 custom/cron"
-          existing="$(gh issue list \
-            --state open \
-            --search "$title in:title" \
-            --json number \
-            --jq '.[0].number // empty')"
 
-          body=$(cat <<EOF
-          自动同步上游 Marchen-orz/MiyoQian:master 时发生无法自动解决的合并冲突。
+          existing="$(
+            gh issue list \
+              --state open \
+              --search "$title in:title" \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
 
-          **没有强制覆盖或推送任何冲突内容。**
+          body="$(cat <<EOF
+          自动同步上游 Marchen-orz/MiyoQian:master 时发生合并冲突。
 
-          以下文件需要人工检查：
+          没有强制覆盖或推送冲突内容。
+
+          以下文件存在无法自动解决的冲突：
 
           $CONFLICT_FILES
 
-          请解决冲突后重新运行「同步上游并构建个人镜像」工作流。
+          请人工检查并解决冲突，然后重新运行同步工作流。
           EOF
-          )
+          )"
 
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body"
+            echo "已更新现有冲突 Issue：#$existing"
           else
-            gh issue create --title "$title" --body "$body"
+            gh issue create \
+              --title "$title" \
+              --body "$body"
+
+            echo "已创建上游同步冲突通知 Issue。"
           fi
 
   build:
     name: 构建并发布个人 GHCR 镜像
     needs: sync
+
     if: needs.sync.outputs.changed == 'true'
+
     permissions:
       contents: read
       packages: write
+
     uses: ./.github/workflows/docker.yml
+
     with:
       ref: ${{ needs.sync.outputs.ref }}
